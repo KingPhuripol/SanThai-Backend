@@ -1,0 +1,55 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+.env
+decrypted_env.txt
+*.decrypted.*
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.env.local
+.env.production
+frontend/.env.local
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker
+*.log
+
+# Uploads (local dev)
+backend/uploads/
+
+# Models cache (large files)
+backend/models_cache/
+
+# Local Dev Uploads / Scripts data
+temp_images/
+hug_mom_images/
+uploads/
+docs/
+data/

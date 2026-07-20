@@ -49,7 +49,7 @@ async def generate_fashion_image(fabric_image_bytes: bytes, garment_style: str) 
     image_file.name = "fabric.png"
 
     result = await client.images.edit(
-        model="gpt-image-1-mini",
+        model=settings.openai_image_model,
         image=image_file,
         prompt=prompt,
         size="1024x1024",

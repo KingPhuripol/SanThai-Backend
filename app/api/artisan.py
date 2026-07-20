@@ -7,12 +7,73 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.api.deps import get_current_artisan_id
+from app.services.order_status_service import update_order_status
 from app.supabase_client import get_supabase
 
 router = APIRouter()
 
 MONTH_TH = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค.", "มิ.ย.",
             "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
+
+
+def _is_public_store(store: dict) -> bool:
+    return bool(store.get("verified_at") and store.get("store_status", "approved") == "approved")
+
+
+@router.get("/communities")
+async def list_public_communities():
+    """Community/map data derived from verified stores and their public listings."""
+    sb = get_supabase()
+    communities = sb.table("communities").select("id, name, province, region, latitude, longitude").execute().data or []
+    stores = sb.table("artisans").select("id, name, community_id, bio_th, bio_en, avatar_url, verified_at, store_status").execute().data or []
+    public_stores = [store for store in stores if _is_public_store(store)]
+    products = sb.table("products").select("id, artisan_id, title_th, title_en, price_thb, images, stock, is_active, fabric_patterns(image_url)").eq("is_active", True).execute().data or []
+    products_by_store: dict[int, list[dict]] = defaultdict(list)
+    for product in products:
+        products_by_store[product.get("artisan_id")].append(product)
+
+    rows = []
+    for community in communities:
+        community_stores = [store for store in public_stores if store.get("community_id") == community["id"]]
+        if not community_stores:
+            continue
+        store_rows = []
+        for store in community_stores:
+            store_products = products_by_store.get(store["id"], [])
+            first_product = store_products[0] if store_products else {}
+            fabric = first_product.get("fabric_patterns") or {}
+            image = ((first_product.get("images") or [None])[0] or fabric.get("image_url") or store.get("avatar_url"))
+            store_rows.append({
+                "id": store["id"], "name": store.get("name"), "bio_th": store.get("bio_th"), "bio_en": store.get("bio_en"),
+                "avatar_url": store.get("avatar_url"), "product_count": len(store_products),
+                "image_url": image,
+            })
+        rows.append({**community, "store_count": len(store_rows), "product_count": sum(s["product_count"] for s in store_rows), "stores": store_rows})
+    return rows
+
+
+@router.get("/storefront/{artisan_id}")
+async def get_public_storefront(artisan_id: int):
+    sb = get_supabase()
+    store_res = sb.table("artisans").select("*, communities(*)").eq("id", artisan_id).single().execute()
+    store = store_res.data
+    if not store or not _is_public_store(store):
+        raise HTTPException(status_code=404, detail="Store not found")
+    products = (
+        sb.table("products")
+        .select("id, title_th, title_en, price_thb, stock, sale_unit, images, is_active, fabric_patterns(name_th, name_en, image_url)")
+        .eq("artisan_id", artisan_id).eq("is_active", True).order("id", desc=True).execute().data or []
+    )
+    return {
+        "store": {"id": store["id"], "name": store.get("name"), "bio_th": store.get("bio_th"), "bio_en": store.get("bio_en"), "avatar_url": store.get("avatar_url"), "verified": True},
+        "community": store.get("communities") or {},
+        "products": [{
+            "id": p["id"], "title_th": p.get("title_th"), "title_en": p.get("title_en"), "price_thb": p.get("price_thb"), "stock": p.get("stock"), "sale_unit": p.get("sale_unit"),
+            "image_url": ((p.get("images") or [None])[0] or (p.get("fabric_patterns") or {}).get("image_url")),
+            "fabric_name": (p.get("fabric_patterns") or {}).get("name_th"),
+            "fabric_name_en": (p.get("fabric_patterns") or {}).get("name_en"),
+        } for p in products],
+    }
 
 
 @router.get("/dashboard/{artisan_id}")
@@ -136,6 +197,7 @@ class UpdateOrderStatusInput(BaseModel):
     status: str
     tracking_number: str = None
     courier: str = None
+    reason: str = None
 
 @router.put("/orders/{order_id}/status")
 async def update_order_status(
@@ -157,17 +219,14 @@ async def update_order_status(
     if (owner_res.data.get("products") or {}).get("artisan_id") != artisan_id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    update_data = {"status": input_data.status}
-    if input_data.tracking_number:
-        update_data["tracking_number"] = input_data.tracking_number
-    if input_data.courier:
-        update_data["courier"] = input_data.courier
-        
-    res = sb.table("orders").update(update_data).eq("id", order_id).execute()
-    
-    if not res.data:
-        raise HTTPException(status_code=404, detail="Order not found")
-        
+    artisan_res = sb.table("artisans").select("name").eq("id", artisan_id).single().execute()
+    update_order_status(
+        sb, order_id, input_data.status, "store",
+        actor_name=(artisan_res.data or {}).get("name"),
+        tracking_number=input_data.tracking_number,
+        courier=input_data.courier,
+        reason=input_data.reason,
+    )
     return {"status": "success", "message": "Order updated"}
 
 

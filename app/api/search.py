@@ -42,7 +42,7 @@ async def semantic_search(
     # Fallback: keyword-based search
     query = (
         sb.table("fabric_patterns")
-        .select("id, name_th, name_en, image_url, weave_technique, dye_method, cultural_meaning_th, story_tags, usage_rights, artisans(name), communities(province, name), products(id, price_thb, price_usd)")
+        .select("id, name_th, name_en, image_url, weave_technique, dye_method, cultural_meaning_th, cultural_meaning_en, story_tags, usage_rights, artisans(name), communities(province, name), products(id, price_thb, price_usd)")
         .or_(f"name_th.ilike.%{q}%,name_en.ilike.%{q}%,weave_technique.ilike.%{q}%,cultural_meaning_th.ilike.%{q}%")
         .limit(limit)
     )
@@ -67,6 +67,7 @@ async def semantic_search(
             "weave_technique": r.get("weave_technique"),
             "dye_method": r.get("dye_method"),
             "cultural_meaning_th": r.get("cultural_meaning_th"),
+            "cultural_meaning_en": r.get("cultural_meaning_en"),
             "story_tags": r.get("story_tags"),
             "usage_rights": r.get("usage_rights"),
             "artisan_name": artisan.get("name"),
@@ -117,6 +118,7 @@ async def analyze_fabric_image(
             "weave_technique": r.get("weave_technique"),
             "dye_method": r.get("dye_method"),
             "cultural_meaning_th": r.get("cultural_meaning_th"),
+            "cultural_meaning_en": r.get("cultural_meaning_en"),
             "artisan_name": (r.get("artisans") or {}).get("name"),
             "province": (r.get("communities") or {}).get("province"),
             "price_thb": price,

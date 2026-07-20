@@ -3,7 +3,7 @@ Fabrics API — rewritten to use Supabase REST client instead of SQLAlchemy.
 """
 import uuid
 import hashlib
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
@@ -74,6 +74,7 @@ async def list_fabrics(
     limit: int = 50,
     region: Optional[str] = None,
     weave_technique: Optional[str] = None,
+    artisan_id: Optional[int] = None,
 ):
     sb = get_supabase()
     query = (
@@ -83,9 +84,13 @@ async def list_fabrics(
     )
     if weave_technique:
         query = query.ilike("weave_technique", f"%{weave_technique}%")
+    if artisan_id:
+        query = query.eq("artisan_id", artisan_id)
 
     res = query.execute()
-    rows = res.data or []
+    # `restricted` records are retained for order history and owner edits, but
+    # are not part of the public fabric library or recognition results.
+    rows = [f for f in (res.data or []) if f.get("usage_rights") != "restricted"]
 
     if region:
         rows = [r for r in rows if (r.get("communities") or {}).get("region", "") == region]
@@ -103,6 +108,7 @@ async def list_fabrics(
             "usage_rights": f.get("usage_rights"),
             "ai_processed": f.get("ai_processed"),
             "story_tags": f.get("story_tags"),
+            "artisan": {"id": f.get("artisan_id")},
             "community": f.get("communities"),
         }
         for f in rows
@@ -121,6 +127,7 @@ async def upload_fabric(
     story_th: str = Form(""),
     usage_rights: str = Form("commercial"),
     image: Optional[UploadFile] = File(None),
+    images: List[UploadFile] = File(default=[]),
     image_url: Optional[str] = Form(None),
 ):
     sb = get_supabase()
@@ -135,13 +142,23 @@ async def upload_fabric(
 
     # Handle image upload
     final_image_url = image_url
-    if image and image.filename:
-        file_bytes = await image.read()
-        content_type = image.content_type or "image/jpeg"
+    # `images` is used by the current artisan form. Keep accepting the older
+    # singular `image` field as well so existing clients continue to work.
+    uploaded_images = ([image] if image and image.filename else []) + [
+        uploaded for uploaded in images if uploaded and uploaded.filename
+    ]
+    if uploaded_images:
+        primary_image = uploaded_images[0]
+        file_bytes = await primary_image.read()
+        content_type = primary_image.content_type or "image/jpeg"
+        if len(file_bytes) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=422, detail="Fabric image must be 5 MB or smaller")
+        if not content_type.startswith("image/"):
+            raise HTTPException(status_code=422, detail="Fabric upload must be an image")
         # Upload to Supabase Storage
         import httpx
         from app.config import settings
-        ext = image.filename.rsplit(".", 1)[-1] if "." in image.filename else "jpg"
+        ext = primary_image.filename.rsplit(".", 1)[-1] if "." in primary_image.filename else "jpg"
         fname = f"fabric_{uuid.uuid4().hex[:8]}.{ext}"
         
         url = f"{settings.supabase_url}/storage/v1/object/santhai/{fname}"
@@ -155,7 +172,7 @@ async def upload_fabric(
             if res.status_code == 200:
                 final_image_url = f"{settings.supabase_url}/storage/v1/object/public/santhai/{fname}"
             else:
-                pass # fallback to original image_url if failed
+                raise HTTPException(status_code=502, detail="Failed to upload fabric image")
 
     # Create fabric record
     fabric_res = sb.table("fabric_patterns").insert({
@@ -258,6 +275,8 @@ async def get_fabric(fabric_id: int):
     if not res.data:
         raise HTTPException(status_code=404, detail="Fabric not found")
     f = res.data
+    if f.get("usage_rights") == "restricted":
+        raise HTTPException(status_code=404, detail="Fabric not found")
     return {
         "id": f["id"],
         "name_th": f["name_th"],

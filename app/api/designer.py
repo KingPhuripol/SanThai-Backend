@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException
 from pydantic import BaseModel
 
 from app.api.deps import get_current_designer_id
+from app.services.order_status_service import update_order_status
 from app.config import settings
 from app.supabase_client import get_supabase
 
@@ -128,6 +129,7 @@ class UpdateOrderStatusInput(BaseModel):
     status: str
     tracking_number: Optional[str] = None
     courier: Optional[str] = None
+    reason: Optional[str] = None
 
 
 @router.put("/orders/{order_id}/status")
@@ -150,14 +152,12 @@ async def update_order_status(
     if (owner_res.data.get("products") or {}).get("designer_id") != designer_id:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    update_data = {"status": input_data.status}
-    if input_data.tracking_number:
-        update_data["tracking_number"] = input_data.tracking_number
-    if input_data.courier:
-        update_data["courier"] = input_data.courier
-
-    res = sb.table("orders").update(update_data).eq("id", order_id).execute()
-    if not res.data:
-        raise HTTPException(status_code=404, detail="Order not found")
+    update_order_status(
+        sb, order_id, input_data.status, "designer",
+        actor_name=designer_id,
+        tracking_number=input_data.tracking_number,
+        courier=input_data.courier,
+        reason=input_data.reason,
+    )
 
     return {"status": "success", "message": "Order updated"}

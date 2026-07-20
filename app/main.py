@@ -1,7 +1,13 @@
 import os
 import sys
 import traceback
+from dotenv import load_dotenv
 from fastapi import FastAPI
+
+# Some API modules initialise third-party clients at import time. Load the
+# backend environment before importing routers so local Uvicorn behaves like
+# Settings(env_file='.env') and does not enter the Vercel fallback app.
+load_dotenv(".env")
 
 app = FastAPI(
     title="SanThai API",
@@ -16,7 +22,7 @@ try:
     from fastapi.staticfiles import StaticFiles
 
     from app.database import create_tables
-    from app.api import fabrics, products, chat, search, artisan, auth, designer, admin, verify
+    from app.api import analytics, fabrics, products, chat, search, artisan, auth, designer, admin, verify
 except Exception as e:
     _import_error = traceback.format_exc()
 
@@ -60,6 +66,7 @@ else:
     app.include_router(designer.router, prefix="/api/designer", tags=["designer"])
     app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
     app.include_router(verify.router, prefix="/api/verify/fabric", tags=["verify"])
+    app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 
     @app.get("/")
     async def root():
@@ -68,5 +75,3 @@ else:
     @app.get("/health")
     async def health():
         return {"status": "ok"}
-
-

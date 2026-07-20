@@ -11,6 +11,8 @@ class Settings(BaseSettings):
 
     # OpenAI (legacy — ใช้ Groq แทน)
     openai_api_key: str = ""
+    openai_image_model: str = "gpt-image-1-mini"
+    openai_vision_model: str = "gpt-4o-mini"
 
     # Groq
     groq_api_key: str = ""

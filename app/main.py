@@ -54,8 +54,11 @@ else:
     )
 
     # Serve local uploads in development
-    os.makedirs("uploads", exist_ok=True)
-    app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+    try:
+        os.makedirs("uploads", exist_ok=True)
+        app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+    except Exception:
+        pass
 
     app.include_router(fabrics.router, prefix="/api/fabrics", tags=["fabrics"])
     app.include_router(products.router, prefix="/api/products", tags=["products"])

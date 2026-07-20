@@ -9,10 +9,11 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 
-client = AsyncOpenAI(
-    api_key=settings.groq_api_key,
-    base_url="https://api.groq.com/openai/v1",
-)
+def _get_groq_client() -> AsyncOpenAI:
+    return AsyncOpenAI(
+        api_key=settings.groq_api_key or "dummy_key",
+        base_url="https://api.groq.com/openai/v1",
+    )
 
 _EXTRACTION_PROMPT = """\
 You are an expert in Thai textile culture and heritage. Analyze the following description of a Thai fabric pattern and extract structured data.
@@ -52,7 +53,7 @@ async def extract_fabric_story(
         dye_method=dye_method,
     )
     try:
-        response = await client.chat.completions.create(
+        response = await _get_groq_client().chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{"role": "user", "content": prompt}],
             temperature=0.3,
@@ -67,7 +68,7 @@ async def translate_to_english(text_th: str) -> str:
     if not text_th:
         return ""
     try:
-        response = await client.chat.completions.create(
+        response = await _get_groq_client().chat.completions.create(
             model="llama-3.3-70b-versatile",
             messages=[{
                 "role": "user",

@@ -12,11 +12,14 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 
-openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
-groq_client = AsyncOpenAI(
-    api_key=settings.groq_api_key,
-    base_url="https://api.groq.com/openai/v1",
-)
+def _get_openai_client() -> AsyncOpenAI:
+    return AsyncOpenAI(api_key=settings.openai_api_key or "dummy_key")
+
+def _get_groq_client() -> AsyncOpenAI:
+    return AsyncOpenAI(
+        api_key=settings.groq_api_key or "dummy_key",
+        base_url="https://api.groq.com/openai/v1",
+    )
 
 _IDENTIFY_PROMPT = """\
 คุณคือผู้เชี่ยวชาญผ้าไทยและสิ่งทอพื้นบ้าน ดูภาพผ้าที่ส่งมาและวิเคราะห์อย่างละเอียด
@@ -66,12 +69,12 @@ async def identify_fabric_from_image(image_bytes: bytes, mime_type: str = "image
 
     if settings.openai_api_key:
         try:
-            return await _call_vision(openai_client, "gpt-5.4-mini-2026-03-17", data_url, use_completion_tokens=True)
+            return await _call_vision(_get_openai_client(), "gpt-5.4-mini-2026-03-17", data_url, use_completion_tokens=True)
         except Exception:
             pass  # fall through to Groq
 
     try:
-        return await _call_vision(groq_client, "meta-llama/llama-4-scout-17b-16e-instruct", data_url)
+        return await _call_vision(_get_groq_client(), "meta-llama/llama-4-scout-17b-16e-instruct", data_url)
     except Exception as e:
         return {
             "fabric_type_th": "ไม่สามารถระบุได้",

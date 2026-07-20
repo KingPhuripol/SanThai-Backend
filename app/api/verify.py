@@ -9,8 +9,6 @@ import time
 
 router = APIRouter()
 
-client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-
 class VerifyRequest(BaseModel):
     image_base64: str
 
@@ -24,8 +22,10 @@ class VerifyResponse(BaseModel):
 
 @router.post("/", response_model=VerifyResponse)
 async def verify_fabric(req: VerifyRequest):
-    if not client.api_key:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
         raise HTTPException(status_code=500, detail="OpenAI API key not configured")
+    client = OpenAI(api_key=api_key)
 
     # The incoming base64 might have "data:image/jpeg;base64," prefix.
     # We pass the full URL string to OpenAI vision

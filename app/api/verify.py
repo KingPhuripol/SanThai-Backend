@@ -20,7 +20,7 @@ class VerifyResponse(BaseModel):
     blockchain_hash: str
     timestamp: str
 
-@router.post("/", response_model=VerifyResponse)
+@router.post("", response_model=VerifyResponse)
 async def verify_fabric(req: VerifyRequest):
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:

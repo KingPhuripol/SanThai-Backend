@@ -52,6 +52,9 @@ class ProfileUpdateInput(BaseModel):
     email: Optional[EmailStr] = None
     password: Optional[str] = None
     community_name: Optional[str] = None
+    province: Optional[str] = None
+    region: Optional[str] = None
+    bio_th: Optional[str] = None
 
 
 class SessionOut(BaseModel):
@@ -107,6 +110,10 @@ async def register(input_data: RegisterInput):
                 detail="community_name, province, and region are required for store accounts",
             )
 
+        comm_name = input_data.community_name.strip()
+        prov_name = input_data.province.strip()
+        reg_name = input_data.region.strip()
+
         user_id = str(uuid.uuid4())
         sb.table("users_profile").insert({
             "id": user_id,
@@ -119,25 +126,30 @@ async def register(input_data: RegisterInput):
         community_res = (
             sb.table("communities")
             .select("id")
-            .eq("name", input_data.community_name)
-            .eq("province", input_data.province)
+            .eq("name", comm_name)
+            .eq("province", prov_name)
             .execute()
         )
         if community_res.data:
             community_id = community_res.data[0]["id"]
         else:
             created_community = sb.table("communities").insert({
-                "name": input_data.community_name,
-                "province": input_data.province,
-                "region": input_data.region,
+                "name": comm_name,
+                "province": prov_name,
+                "region": reg_name,
             }).execute()
             community_id = created_community.data[0]["id"]
 
+        now_iso = datetime.now(timezone.utc).isoformat()
         artisan_res = sb.table("artisans").insert({
             "user_id": user_id,
             "name": input_data.full_name,
             "community_id": community_id,
             "bio_th": input_data.bio_th,
+            "store_status": "approved",
+            "verified_at": now_iso,
+            "store_terms_version": STORE_TERMS_VERSION,
+            "store_terms_accepted_at": now_iso,
         }).execute()
         artisan = artisan_res.data[0]
 
@@ -183,6 +195,32 @@ async def login(input_data: LoginInput):
         if art_res.data:
             artisan_id = art_res.data[0]["id"]
             artisan_name = art_res.data[0]["name"]
+        else:
+            by_name = sb.table("artisans").select("id, name").eq("name", user.get("full_name")).execute()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            if by_name.data:
+                artisan_id = by_name.data[0]["id"]
+                artisan_name = by_name.data[0]["name"]
+                sb.table("artisans").update({
+                    "user_id": user["id"],
+                    "store_status": "approved",
+                    "verified_at": now_iso,
+                    "store_terms_version": STORE_TERMS_VERSION,
+                    "store_terms_accepted_at": now_iso
+                }).eq("id", artisan_id).execute()
+            else:
+                new_art = sb.table("artisans").insert({
+                    "user_id": user["id"],
+                    "name": user.get("full_name") or "ร้านค้า SanThai",
+                    "community_id": 54,
+                    "store_status": "approved",
+                    "verified_at": now_iso,
+                    "store_terms_version": STORE_TERMS_VERSION,
+                    "store_terms_accepted_at": now_iso
+                }).execute()
+                if new_art.data:
+                    artisan_id = new_art.data[0]["id"]
+                    artisan_name = new_art.data[0]["name"]
 
     return _issue(user["id"], user["email"], user.get("full_name") or "",
                   user["role"], artisan_id, artisan_name)
@@ -287,13 +325,22 @@ async def update_profile(input_data: ProfileUpdateInput, user: dict = Depends(ge
         if input_data.full_name is not None:
             artisan_updates["name"] = input_data.full_name
             updated_artisan_name = input_data.full_name
+        if input_data.bio_th is not None:
+            artisan_updates["bio_th"] = input_data.bio_th
             
+        artisan_res = sb.table("artisans").select("community_id").eq("id", user["artisan_id"]).execute()
+        community_id = artisan_res.data[0]["community_id"] if (artisan_res.data and artisan_res.data[0].get("community_id")) else None
+        
+        community_updates = {}
         if input_data.community_name is not None:
-            artisan_res = sb.table("artisans").select("community_id").eq("id", user["artisan_id"]).execute()
-            if artisan_res.data:
-                community_id = artisan_res.data[0]["community_id"]
-                if community_id:
-                    sb.table("communities").update({"name": input_data.community_name}).eq("id", community_id).execute()
+            community_updates["name"] = input_data.community_name
+        if input_data.province is not None:
+            community_updates["province"] = input_data.province
+        if input_data.region is not None:
+            community_updates["region"] = input_data.region
+            
+        if community_updates and community_id:
+            sb.table("communities").update(community_updates).eq("id", community_id).execute()
                     
         if artisan_updates:
             sb.table("artisans").update(artisan_updates).eq("id", user["artisan_id"]).execute()

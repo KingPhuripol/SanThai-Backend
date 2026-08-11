@@ -93,10 +93,19 @@ async def list_fabrics(
     rows = [f for f in (res.data or []) if f.get("usage_rights") != "restricted"]
 
     if region:
-        rows = [r for r in rows if (r.get("communities") or {}).get("region", "") == region]
+        target_reg = region.strip().lower()
+        rows = [r for r in rows if ((r.get("communities") or {}).get("region") or "").strip().lower() == target_reg]
 
-    return [
-        {
+    out = []
+    for f in rows:
+        comm = f.get("communities")
+        if isinstance(comm, dict):
+            comm = {
+                **comm,
+                "province": (comm.get("province") or "").strip(),
+                "region": (comm.get("region") or "").strip(),
+            }
+        out.append({
             "id": f["id"],
             "name_th": f["name_th"],
             "name_en": f.get("name_en"),
@@ -109,10 +118,9 @@ async def list_fabrics(
             "ai_processed": f.get("ai_processed"),
             "story_tags": f.get("story_tags"),
             "artisan": {"id": f.get("artisan_id")},
-            "community": f.get("communities"),
-        }
-        for f in rows
-    ]
+            "community": comm,
+        })
+    return out
 
 
 @router.post("/upload")
@@ -151,8 +159,8 @@ async def upload_fabric(
         primary_image = uploaded_images[0]
         file_bytes = await primary_image.read()
         content_type = primary_image.content_type or "image/jpeg"
-        if len(file_bytes) > 5 * 1024 * 1024:
-            raise HTTPException(status_code=422, detail="Fabric image must be 5 MB or smaller")
+        if len(file_bytes) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=422, detail="Fabric image must be 10 MB or smaller")
         if not content_type.startswith("image/"):
             raise HTTPException(status_code=422, detail="Fabric upload must be an image")
         # Upload to Supabase Storage

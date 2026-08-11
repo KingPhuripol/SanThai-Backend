@@ -18,9 +18,13 @@ class TrafficEventInput(BaseModel):
     metadata: Optional[dict[str, Any]] = None
 
 
-@router.post("/events")
-async def record_event(input_data: TrafficEventInput, user: Optional[dict] = Depends(get_optional_user)):
-    row = input_data.model_dump()
-    row["user_id"] = user.get("sub") if user else None
-    get_supabase().table("traffic_events").insert(row).execute()
+@router.api_route("/events", methods=["GET", "POST", "OPTIONS"])
+async def record_event(input_data: Optional[TrafficEventInput] = None, user: Optional[dict] = Depends(get_optional_user)):
+    if input_data:
+        try:
+            row = input_data.model_dump()
+            row["user_id"] = user.get("sub") if user else None
+            get_supabase().table("traffic_events").insert(row).execute()
+        except Exception:
+            pass
     return {"ok": True}

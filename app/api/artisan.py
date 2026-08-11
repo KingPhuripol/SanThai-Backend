@@ -16,8 +16,31 @@ MONTH_TH = ["", "ม.ค.", "ก.พ.", "มี.ค.", "เม.ย.", "พ.ค."
             "ก.ค.", "ส.ค.", "ก.ย.", "ต.ค.", "พ.ย.", "ธ.ค."]
 
 
+INVALID_PROVINCES = {"ติ่งแน้ด", "ลาว", "ไม่ระบุ", "ทดสอบ"}
+INVALID_STORE_KEYWORDS = ["ร้านพี่", "ร้านผม", "ร้านเอ", "pangpond", "smoke artisan", "final check", "ทดสอบ"]
+
 def _is_public_store(store: dict) -> bool:
-    return bool(store.get("verified_at") and store.get("store_status", "approved") == "approved")
+    if not store:
+        return False
+    status = (store.get("store_status") or "").lower()
+    verified = bool(store.get("verified_at"))
+    if not (verified or status in ("approved", "active", "verified")):
+        return False
+    name = (store.get("name") or "").lower()
+    if any(kw in name for kw in INVALID_STORE_KEYWORDS):
+        return False
+    return True
+
+
+
+STORE_FALLBACK_IMAGES = [
+    "https://shqgmstbrwkxycyellgn.supabase.co/storage/v1/object/public/santhai/seed-migration/2026-07-18/thai_fabric_01.jpg",
+    "https://shqgmstbrwkxycyellgn.supabase.co/storage/v1/object/public/santhai/seed-migration/2026-07-18/thai_fabric_amnat_charoen_01.jpg",
+    "https://shqgmstbrwkxycyellgn.supabase.co/storage/v1/object/public/santhai/seed-migration/2026-07-18/thai_fabric_amnat_charoen_046.jpg",
+    "https://shqgmstbrwkxycyellgn.supabase.co/storage/v1/object/public/santhai/seed-migration/2026-07-18/thai_fabric_image_01.jpg",
+    "https://shqgmstbrwkxycyellgn.supabase.co/storage/v1/object/public/santhai/seed-migration/2026-07-18/thai_fabric_image_02.jpg",
+    "https://shqgmstbrwkxycyellgn.supabase.co/storage/v1/object/public/santhai/seed-migration/2026-07-18/thai_fabric.jpg",
+]
 
 
 @router.get("/communities")
@@ -34,21 +57,38 @@ async def list_public_communities():
 
     rows = []
     for community in communities:
+        prov = (community.get("province") or "").strip()
+        reg = (community.get("region") or "").strip()
+        if any(inv in prov for inv in INVALID_PROVINCES):
+            continue
         community_stores = [store for store in public_stores if store.get("community_id") == community["id"]]
+
         if not community_stores:
             continue
         store_rows = []
-        for store in community_stores:
+        for idx, store in enumerate(community_stores):
             store_products = products_by_store.get(store["id"], [])
-            first_product = store_products[0] if store_products else {}
-            fabric = first_product.get("fabric_patterns") or {}
-            image = ((first_product.get("images") or [None])[0] or fabric.get("image_url") or store.get("avatar_url"))
+            image = store.get("avatar_url")
+            if not image:
+                for p in store_products:
+                    img = (p.get("images") or [None])[0] or (p.get("fabric_patterns") or {}).get("image_url")
+                    if img:
+                        image = img
+                        break
+            if not image:
+                image = STORE_FALLBACK_IMAGES[(store["id"] + idx) % len(STORE_FALLBACK_IMAGES)]
+
             store_rows.append({
-                "id": store["id"], "name": store.get("name"), "bio_th": store.get("bio_th"), "bio_en": store.get("bio_en"),
-                "avatar_url": store.get("avatar_url"), "product_count": len(store_products),
+                "id": store["id"],
+                "name": store.get("name"),
+                "bio_th": store.get("bio_th"),
+                "bio_en": store.get("bio_en"),
+                "avatar_url": store.get("avatar_url"),
+                "product_count": len(store_products),
                 "image_url": image,
             })
-        rows.append({**community, "store_count": len(store_rows), "product_count": sum(s["product_count"] for s in store_rows), "stores": store_rows})
+        clean_comm = {**community, "province": prov, "region": reg}
+        rows.append({**clean_comm, "store_count": len(store_rows), "product_count": sum(s["product_count"] for s in store_rows), "stores": store_rows})
     return rows
 
 

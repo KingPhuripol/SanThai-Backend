@@ -157,42 +157,45 @@ async def chat(
 
 
 async def search_fabric_db_supabase(sb, query: str, limit: int = 4) -> str:
-    """ค้นหา fabric ผ่าน Supabase REST API (fallback เมื่อ DB ตรง ไม่ work)"""
-    try:
-        query_embedding = encode_query(query)
-        res = sb.rpc("search_fabrics_by_text", {
-            "query_embedding": str(query_embedding),
-            "match_count": limit,
-            "province_filter": "",
-        }).execute()
-        rows = res.data or []
-    except Exception:
-        rows = []
+    """ค้นหา fabric ผ่าน Supabase REST API พร้อมสกัดคีย์เวิร์ดอย่างฉลาด"""
+    import re
+    cleaned = re.sub(r"[^\w\s\u0e00-\u0e7f]", " ", query)
+    tokens = [t for t in cleaned.split() if len(t) > 1]
+    
+    stopwords = {"สอบถาม", "ประวัติ", "ขอ", "อยาก", "ทราบ", "เกี่ยวกับ", "หน่อย", "ครับ", "ค่ะ", "ช่วย", "บอก", "แนะนำ", "ข้อมูล"}
+    keywords = [t for t in tokens if t not in stopwords]
+    if not keywords:
+        keywords = tokens or [query]
+
+    rows = []
+    seen = set()
+    for kw in keywords[:4]:
+        try:
+            res = (
+                sb.table("fabric_patterns")
+                .select("name_th, name_en, cultural_meaning_th, weave_technique, dye_method, communities(province)")
+                .or_(f"name_th.ilike.%{kw}%,weave_technique.ilike.%{kw}%,cultural_meaning_th.ilike.%{kw}%")
+                .limit(limit)
+                .execute()
+            )
+            for r in (res.data or []):
+                name = r["name_th"]
+                if name not in seen:
+                    seen.add(name)
+                    rows.append({
+                        "name": name,
+                        "name_en": r.get("name_en"),
+                        "province": (r.get("communities") or {}).get("province"),
+                        "technique": r.get("weave_technique"),
+                        "dye": r.get("dye_method"),
+                        "cultural_meaning": r.get("cultural_meaning_th"),
+                    })
+        except Exception:
+            pass
 
     if not rows:
-        # Keyword fallback
-        res = (
-            sb.table("fabric_patterns")
-            .select("name_th, name_en, cultural_meaning_th, weave_technique, dye_method, communities(province)")
-            .or_(f"name_th.ilike.%{query}%,weave_technique.ilike.%{query}%,cultural_meaning_th.ilike.%{query}%")
-            .limit(limit)
-            .execute()
-        )
-        rows = [
-            {
-                "name": r["name_th"],
-                "name_en": r.get("name_en"),
-                "province": (r.get("communities") or {}).get("province"),
-                "technique": r.get("weave_technique"),
-                "dye": r.get("dye_method"),
-                "cultural_meaning": r.get("cultural_meaning_th"),
-            }
-            for r in (res.data or [])
-        ]
-    
-    if not rows:
         return "ไม่มีข้อมูลที่เกี่ยวข้องในฐานข้อมูล"
-    return json.dumps(rows, ensure_ascii=False)
+    return json.dumps(rows[:limit], ensure_ascii=False)
 
 
 async def chat_with_supabase(sb, session_id: str, user_message: str) -> str:

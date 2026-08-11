@@ -70,6 +70,9 @@ else:
     app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
     app.include_router(verify.router, prefix="/api/verify/fabric", tags=["verify"])
     app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
+    @app.options("/{path:path}")
+    async def options_handler(path: str):
+        return {}
 
     @app.get("/")
     async def root():

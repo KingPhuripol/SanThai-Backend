@@ -105,7 +105,7 @@ async def generate_fashion_image(
         fabric_image_bytes = fabric_photo_res.content
 
     try:
-        generated_bytes = await gen_image(fabric_image_bytes, garment_style)
+        generated_bytes = await gen_image(fabric_image_bytes, garment_style, fabric.get("name_th", "Thai Fabric"))
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI image generation failed: {e}")
 

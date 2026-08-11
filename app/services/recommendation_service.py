@@ -102,13 +102,14 @@ async def get_recommendations_supabase(
     limit: int = 3,
 ) -> list:
     """Query recommendations through Supabase REST client with heuristic scoring."""
-    res = (
+    query = (
         sb.table("products")
         .select("*, fabric_patterns(*, communities(*)), artisans(*)")
         .eq("is_active", True)
-        .lte("price_thb", budget_thb)
-        .execute()
     )
+    if budget_thb and budget_thb > 0:
+        query = query.lte("price_thb", budget_thb)
+    res = query.execute()
     rows = res.data or []
 
     # Score each product based on matches with occasion, personality, preferred_color.

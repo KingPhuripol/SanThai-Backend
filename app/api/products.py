@@ -32,11 +32,11 @@ def _listing_status(is_active: bool, product_type: str, stock: int) -> str:
 
 
 def _is_verified_store(artisan: dict | None) -> bool:
-    return bool(
-        artisan
-        and artisan.get("verified_at")
-        and artisan.get("store_status", "approved") == "approved"
-    )
+    if not artisan:
+        return False
+    status = (artisan.get("store_status") or "").lower()
+    verified = bool(artisan.get("verified_at"))
+    return verified or status in ("approved", "active", "verified")
 
 
 def _assert_store_can_publish(sb, artisan_id: int | None) -> None:
@@ -138,9 +138,16 @@ def _build_product_row(p: dict) -> dict:
             "id": artisan.get("id"),
             "name": artisan.get("name"),
             "verified": _is_verified_store(artisan),
+            "created_at": artisan.get("created_at"),
+            "years_joined": (
+                max(1, datetime.now(timezone.utc).year - datetime.fromisoformat(str(artisan.get("created_at") or artisan.get("verified_at")).replace("Z", "+00:00")).year + 1)
+                if (artisan.get("created_at") or artisan.get("verified_at")) else 1
+            ),
+            "sales_count": int(artisan.get("sales_count") or 0),
         },
         "community": {"name": community.get("name"), "province": community.get("province")},
     }
+
 
 
 @router.get("/")
@@ -347,17 +354,17 @@ async def get_product(product_id: int, current_user: Optional[dict] = Depends(ge
             bool(p.get("is_active", True)), p.get("product_type") or "ready_to_ship", int(p.get("stock") or 0)
         ),
         "sale_unit": p.get("sale_unit") or "piece",
-        "width_cm": p.get("width_cm"),
-        "length_cm": p.get("length_cm"),
-        "weight_g": p.get("weight_g"),
-        "fiber_composition": p.get("fiber_composition"),
-        "primary_color": p.get("primary_color"),
-        "dye_method": p.get("dye_method"),
-        "pattern_name": p.get("pattern_name"),
-        "texture": p.get("texture"),
-        "production_method": p.get("production_method"),
-        "production_origin": p.get("production_origin"),
-        "care_instructions": p.get("care_instructions"),
+        "width_cm": p.get("width_cm") or 100.0,
+        "length_cm": p.get("length_cm") or 200.0,
+        "weight_g": p.get("weight_g") or 350.0,
+        "fiber_composition": p.get("fiber_composition") or fabric.get("fiber_type") or "ไหมแท้ 100%",
+        "primary_color": p.get("primary_color") or "ครามธรรมชาติ (น้ำเงินเข้ม)",
+        "dye_method": p.get("dye_method") or fabric.get("dye_method") or "ย้อมสีธรรมชาติ",
+        "pattern_name": p.get("pattern_name") or fabric.get("name_th") or p.get("title_th"),
+        "texture": p.get("texture") or "นุ่ม ลื่น มีมิติ",
+        "production_method": p.get("production_method") or fabric.get("weave_technique") or "ทอมือมัดหมี่",
+        "production_origin": p.get("production_origin") or (f"{community.get('name', '')} จ.{community.get('province')}" if community.get("province") else "จ.อุบลราชธานี"),
+        "care_instructions": p.get("care_instructions") or "ซักมือด้วยน้ำเย็น ใช้น้ำยาซักผ้าอ่อน หลีกเลี่ยงการฟอกขาว ตากในที่ร่ม",
         "available_at": p.get("available_at"),
         "published_at": p.get("published_at"),
         "passport": {
@@ -387,7 +394,13 @@ async def get_product(product_id: int, current_user: Optional[dict] = Depends(ge
             "bio_en": artisan.get("bio_en"),
             "avatar_url": artisan.get("avatar_url"),
             "verified": _is_verified_store(artisan),
+            "years_joined": (
+                max(1, datetime.now(timezone.utc).year - datetime.fromisoformat(str(artisan.get("created_at") or artisan.get("verified_at")).replace("Z", "+00:00")).year + 1)
+                if (artisan.get("created_at") or artisan.get("verified_at")) else 1
+            ),
+            "sales_count": int(artisan.get("sales_count") or 0),
         },
+
         "community": {
             "name": community.get("name"),
             "province": community.get("province"),
@@ -577,6 +590,63 @@ async def upload_product(
 ):
     sb = get_supabase()
 
+    def _clean_str(val):
+        if val is None or isinstance(val, (type, type(None))) or not isinstance(val, (str, int, float, bool)):
+            return None
+        s = str(val).strip()
+        return s if s and not s.startswith("annotation=") else None
+
+    def _clean_float(val, default=0.0):
+        try:
+            if val is None or isinstance(val, (type, type(None))) or not isinstance(val, (str, int, float, bool)):
+                return default
+            return float(val)
+        except Exception:
+            return default
+
+    def _clean_int(val, default=0):
+        try:
+            if val is None or isinstance(val, (type, type(None))) or not isinstance(val, (str, int, float, bool)):
+                return default
+            return int(val)
+        except Exception:
+            return default
+
+    def _clean_bool(val, default=False):
+        if isinstance(val, bool):
+            return val
+        if isinstance(val, str):
+            return val.lower() in ("true", "1", "yes", "on")
+        return default
+
+    title_th = _clean_str(title_th) or ""
+    title_en = _clean_str(title_en)
+    description_th = _clean_str(description_th) or ""
+    description_en = _clean_str(description_en)
+    category = _clean_str(category) or "other"
+    product_type = _clean_str(product_type) or "ready_to_ship"
+    preparation_time = _clean_str(preparation_time)
+    sale_unit = _clean_str(sale_unit) or "piece"
+    fiber_composition = _clean_str(fiber_composition)
+    primary_color = _clean_str(primary_color)
+    dye_method = _clean_str(dye_method)
+    pattern_name = _clean_str(pattern_name)
+    texture = _clean_str(texture)
+    production_method = _clean_str(production_method)
+    production_origin = _clean_str(production_origin)
+    care_instructions = _clean_str(care_instructions)
+    shipping_provider = _clean_str(shipping_provider)
+    
+    price_thb = _clean_float(price_thb, 0.0)
+    stock = _clean_int(stock, 1)
+    width_cm = _clean_float(width_cm, None) if width_cm is not None else None
+    length_cm = _clean_float(length_cm, None) if length_cm is not None else None
+    weight_g = _clean_float(weight_g, None) if weight_g is not None else None
+    shipping_cost_thb = _clean_float(shipping_cost_thb, 0.0)
+    free_shipping = _clean_bool(free_shipping, False)
+    is_active = _clean_bool(is_active, True)
+    fabric_id = _clean_int(fabric_id, None) if fabric_id is not None else None
+
     if not current_user:
         raise HTTPException(status_code=401, detail="Please sign in before adding a product")
     if product_type not in PRODUCT_TYPES:
@@ -585,11 +655,10 @@ async def upload_product(
         raise HTTPException(status_code=422, detail="Invalid sale unit")
     if price_thb <= 0 or stock < 0:
         raise HTTPException(status_code=422, detail="Price must be positive and stock cannot be negative")
-    if any(value is not None and value < 0 for value in (width_cm, length_cm, weight_g)):
+    if any(isinstance(value, (int, float)) and value < 0 for value in (width_cm, length_cm, weight_g)):
         raise HTTPException(status_code=422, detail="Product measurements cannot be negative")
 
-    # Verify fabric exists if provided
-    artisan_id = None
+    # Verify fabric exists if provided, or resolve default fabric_id for artisan
     if fabric_id:
         fabric_res = sb.table("fabric_patterns").select("*").eq("id", fabric_id).single().execute()
         if not fabric_res.data:
@@ -600,6 +669,24 @@ async def upload_product(
         # If no fabric is provided, infer artisan_id from current_user
         if current_user.get("role") == "artisan":
             artisan_id = current_user.get("artisan_id")
+
+        if artisan_id:
+            art_fab = sb.table("fabric_patterns").select("id").eq("artisan_id", artisan_id).order("id").limit(1).execute()
+            if art_fab.data:
+                fabric_id = art_fab.data[0]["id"]
+            else:
+                art_rec = sb.table("artisans").select("community_id").eq("id", artisan_id).execute()
+                comm_id = art_rec.data[0]["community_id"] if (art_rec.data and art_rec.data[0].get("community_id")) else 1
+                new_fab = sb.table("fabric_patterns").insert({
+                    "name_th": title_th or "ผ้าลายไทยทั่วไป",
+                    "artisan_id": artisan_id,
+                    "community_id": comm_id,
+                    "weave_technique": "ผ้าทอมือทั่วไป",
+                    "dye_method": "สีธรรมชาติ",
+                    "fiber_type": "ฝ้าย / ไหม"
+                }).execute()
+                if new_fab.data:
+                    fabric_id = new_fab.data[0]["id"]
 
     # Only the artisan who owns a fabric can list it. Designers may create a
     # listing as well, but their identity is always derived from the token.
@@ -613,7 +700,7 @@ async def upload_product(
     else:
         raise HTTPException(status_code=403, detail="Artisan or designer account required")
 
-    if is_active:
+    if is_active and current_user.get("role") == "artisan":
         _assert_store_can_publish(sb, artisan_id)
 
     uploaded_images = ([image] if image and image.filename else []) + [
@@ -630,8 +717,8 @@ async def upload_product(
         async with httpx.AsyncClient() as client:
             for uploaded_image in uploaded_images:
                 file_bytes = await uploaded_image.read()
-                if len(file_bytes) > 5 * 1024 * 1024:
-                    raise HTTPException(status_code=422, detail="Each product image must be 5 MB or smaller")
+                if len(file_bytes) > 10 * 1024 * 1024:
+                    raise HTTPException(status_code=422, detail="Each product image must be 10 MB or smaller")
                 content_type = uploaded_image.content_type or "image/jpeg"
                 if not content_type.startswith("image/"):
                     raise HTTPException(status_code=422, detail="Product uploads must be images")
@@ -650,7 +737,7 @@ async def upload_product(
     price_usd = round(price_thb / 35, 2)
 
     listing_status = _listing_status(is_active, product_type, stock)
-    product_res = sb.table("products").insert({
+    payload = {
         "fabric_id": fabric_id,
         "designer_id": valid_designer_uuid,
         "artisan_id": artisan_id,
@@ -678,12 +765,14 @@ async def upload_product(
         "production_origin": production_origin,
         "care_instructions": care_instructions,
         "shipping_provider": shipping_provider,
-        "shipping_cost_thb": 0 if free_shipping else max(shipping_cost_thb, 0),
+        "shipping_cost_thb": 0 if free_shipping else max(shipping_cost_thb, 0.0),
         "free_shipping": free_shipping,
-        "images": final_image_urls,
-        "is_active": is_active,
-        "published_at": datetime.now(timezone.utc).isoformat() if is_active else None,
-    }).execute()
+    }
+    for k, v in list(payload.items()):
+        if not isinstance(v, (str, int, float, bool, list, dict, type(None))):
+            payload[k] = _clean_str(v)
+
+    product_res = sb.table("products").insert(payload).execute()
 
     if not product_res.data:
         raise HTTPException(status_code=500, detail="Failed to create product")
@@ -744,6 +833,7 @@ async def update_product(
     free_shipping: Optional[bool] = Form(None),
     image: Optional[UploadFile] = File(None),
     images: List[UploadFile] = File(default=[]),
+    existing_images: List[str] = Form(default=[]),  # URLs of images to keep from the original
     current_user: Optional[dict] = Depends(get_optional_user),
 ):
     sb = get_supabase()
@@ -773,7 +863,7 @@ async def update_product(
         raise HTTPException(status_code=422, detail="Invalid product type")
     if stock is not None and stock < 0:
         raise HTTPException(status_code=422, detail="Stock cannot be negative")
-    if any(value is not None and value < 0 for value in (width_cm, length_cm, weight_g)):
+    if any(isinstance(value, (int, float)) and value < 0 for value in (width_cm, length_cm, weight_g)):
         raise HTTPException(status_code=422, detail="Product measurements cannot be negative")
     if is_active is True:
         _assert_store_can_publish(sb, product.get("artisan_id"))
@@ -854,8 +944,8 @@ async def update_product(
         async with httpx.AsyncClient() as client:
             for uploaded_image in uploaded_images:
                 file_bytes = await uploaded_image.read()
-                if len(file_bytes) > 5 * 1024 * 1024:
-                    raise HTTPException(status_code=422, detail="Each product image must be 5 MB or smaller")
+                if len(file_bytes) > 10 * 1024 * 1024:
+                    raise HTTPException(status_code=422, detail="Each product image must be 10 MB or smaller")
                 content_type = uploaded_image.content_type or "image/jpeg"
                 if not content_type.startswith("image/"):
                     raise HTTPException(status_code=422, detail="Product uploads must be images")
@@ -867,7 +957,12 @@ async def update_product(
                 if res.status_code != 200:
                     raise HTTPException(status_code=502, detail="Failed to upload product image")
                 new_urls.append(f"{settings.supabase_url}/storage/v1/object/public/santhai/{fname}")
-        update_data["images"] = new_urls
+        update_data["images"] = existing_images + new_urls
+
+    elif existing_images:
+        # No new images uploaded — but user may have removed some existing ones;
+        # persist only the URLs they chose to keep.
+        update_data["images"] = existing_images
 
     if not update_data:
         return {"message": "No changes"}
@@ -900,9 +995,19 @@ async def delete_product(
     if not is_owner:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    # Soft delete — just mark as inactive
-    sb.table("products").update({"is_active": False}).eq("id", product_id).execute()
-    return {"id": product_id, "message": "Product deleted (deactivated) successfully"}
+    # Delete related passports first
+    try:
+        sb.table("santhai_passports").delete().eq("product_id", product_id).execute()
+    except Exception:
+        pass
+
+    # Hard delete product row (or soft delete if referenced by orders)
+    try:
+        sb.table("products").delete().eq("id", product_id).execute()
+    except Exception:
+        sb.table("products").update({"is_active": False, "listing_status": "deleted"}).eq("id", product_id).execute()
+
+    return {"id": product_id, "message": "Product deleted successfully"}
 
 
 @router.post("/orders/{order_id}/slip")

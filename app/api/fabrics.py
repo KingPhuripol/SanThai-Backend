@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, UploadFile
 
-from app.api.deps import get_current_artisan_id
+from app.api.deps import get_current_artisan_id, rate_limit
 from app.supabase_client import get_supabase
 
 router = APIRouter()
@@ -340,7 +340,7 @@ async def get_provenance(fabric_id: int):
     }
 
 
-@router.post("/recognize")
+@router.post("/recognize", dependencies=[Depends(rate_limit(10, 60))])
 async def recognize_pattern(image: UploadFile = File(...)):
     """
     VLM-based fabric recognition (OpenAI gpt-4o-mini, falls back to Groq) —
@@ -350,8 +350,16 @@ async def recognize_pattern(image: UploadFile = File(...)):
     from app.services.fabric_vision_service import identify_fabric_from_image, search_fabrics_by_keywords
 
     image_bytes = await image.read()
+    if len(image_bytes) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=413, detail="Image must be 5 MB or smaller")
     mime_type = image.content_type or "image/jpeg"
-    vision_result = await identify_fabric_from_image(image_bytes, mime_type)
+    if not mime_type.startswith("image/"):
+        raise HTTPException(status_code=422, detail="Please upload an image")
+    try:
+        vision_result = await identify_fabric_from_image(image_bytes, mime_type)
+    except Exception as e:
+        print(f"recognize failed: {e}")
+        raise HTTPException(status_code=503, detail="Fabric recognition is unavailable right now")
 
     keywords = list(vision_result.get("search_keywords") or [])
     for extra in (vision_result.get("fabric_type_th"), vision_result.get("pattern_name_th")):

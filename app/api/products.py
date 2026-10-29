@@ -7,13 +7,16 @@ import base64
 from io import BytesIO
 from datetime import datetime, timedelta, timezone
 from typing import Optional, List
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, constr
+
+ShippingAddress = constr(strip_whitespace=True, min_length=10, max_length=500)
 from promptpay import qrcode as promptpay_qrcode
 from fastapi import APIRouter, Depends, HTTPException, File, Form, UploadFile
 
 from app.api.deps import get_current_user_id, get_optional_user
 from app.services.reservation_service import RESERVATION_MINUTES, release_expired_reservations
 from app.services.order_status_service import update_order_status
+from app.services.storage_service import signed_slip_url, upload_slip
 from app.supabase_client import get_supabase
 
 router = APIRouter()
@@ -223,7 +226,7 @@ async def get_my_orders_early(user_id: str = Depends(get_current_user_id)):
             "product_image": (((o.get("products") or {}).get("images") or [None])[0] or ((o.get("products") or {}).get("fabric_patterns") or {}).get("image_url")),
             "variant": o.get("product_variants"), "quantity": o.get("quantity", 1),
             "total_thb": o.get("total_thb", 0), "status": o.get("status", "pending"),
-            "reserved_until": o.get("reserved_until"), "slip_url": o.get("slip_url"),
+            "reserved_until": o.get("reserved_until"), "slip_url": signed_slip_url(sb, o.get("slip_url")),
             "tracking_number": o.get("tracking_number"), "courier": o.get("courier"), "created_at": o.get("created_at"),
             "updated_at": o.get("updated_at"), "events": o.get("order_status_events") or [],
         }
@@ -411,16 +414,20 @@ async def get_product(product_id: int, current_user: Optional[dict] = Depends(ge
     }
 
 
+class CreateOrderInput(BaseModel):
+    product_id: int
+    buyer_email: str
+    buyer_address: ShippingAddress
+    buyer_phone: Optional[str] = Field(default=None, max_length=30)
+    quantity: int = 1
+    buyer_name: Optional[str] = None
+    variant_id: Optional[int] = None
+
+
 @router.post("/orders")
-async def create_order(
-    product_id: int,
-    buyer_email: str,
-    quantity: int = 1,
-    buyer_name: Optional[str] = None,
-    buyer_address: Optional[str] = None,
-    variant_id: Optional[int] = None,
-    user_id: str = Depends(get_current_user_id),
-):
+async def create_order(input_data: CreateOrderInput, user_id: str = Depends(get_current_user_id)):
+    product_id, buyer_email, quantity = input_data.product_id, input_data.buyer_email, input_data.quantity
+    buyer_name, buyer_address, variant_id = input_data.buyer_name, input_data.buyer_address, input_data.variant_id
     if quantity < 1:
         raise HTTPException(status_code=422, detail="Quantity must be at least 1")
     sb = get_supabase()
@@ -473,6 +480,7 @@ async def create_order(
         "buyer_email": buyer_email,
         "buyer_name": buyer_name,
         "buyer_address": buyer_address,
+        "buyer_phone": input_data.buyer_phone,
         "quantity": quantity,
         "subtotal_thb": subtotal_thb,
         "shipping_thb": shipping_thb,
@@ -544,7 +552,7 @@ async def get_my_orders(user_id: str = Depends(get_current_user_id)):
             "total_thb": o.get("total_thb", 0),
             "status": o.get("status", "pending"),
             "reserved_until": o.get("reserved_until"),
-            "slip_url": o.get("slip_url"),
+            "slip_url": signed_slip_url(sb, o.get("slip_url")),
             "tracking_number": o.get("tracking_number"),
             "courier": o.get("courier"),
             "created_at": o.get("created_at"),
@@ -659,6 +667,8 @@ async def upload_product(
         raise HTTPException(status_code=422, detail="Product measurements cannot be negative")
 
     # Verify fabric exists if provided, or resolve default fabric_id for artisan
+    artisan_id = None
+    fabric = {}
     if fabric_id:
         fabric_res = sb.table("fabric_patterns").select("*").eq("id", fabric_id).single().execute()
         if not fabric_res.data:
@@ -696,6 +706,8 @@ async def upload_product(
             raise HTTPException(status_code=403, detail="You can only list products made from your own fabric")
 
     elif current_user.get("role") == "designer":
+        if fabric.get("usage_rights") == "restricted":
+            raise HTTPException(status_code=403, detail="This fabric is not licensed for designer listings")
         valid_designer_uuid = current_user.get("sub")
     else:
         raise HTTPException(status_code=403, detail="Artisan or designer account required")
@@ -849,9 +861,7 @@ async def update_product(
     if product.get("designer_id") and product["designer_id"] == user_id:
         is_owner = True
     if product.get("artisan_id") and current_user:
-        # Check if user is this artisan
-        artisan_res = sb.table("artisans").select("id").eq("user_id", user_id).single().execute()
-        if artisan_res.data and artisan_res.data["id"] == product["artisan_id"]:
+        if current_user.get("role") == "artisan" and int(current_user.get("artisan_id") or 0) == product["artisan_id"]:
             is_owner = True
 
     if not is_owner:
@@ -988,8 +998,7 @@ async def delete_product(
     if product.get("designer_id") and product["designer_id"] == user_id:
         is_owner = True
     if product.get("artisan_id") and current_user:
-        artisan_res = sb.table("artisans").select("id").eq("user_id", user_id).single().execute()
-        if artisan_res.data and artisan_res.data["id"] == product["artisan_id"]:
+        if current_user.get("role") == "artisan" and int(current_user.get("artisan_id") or 0) == product["artisan_id"]:
             is_owner = True
 
     if not is_owner:
@@ -1030,25 +1039,15 @@ async def upload_payment_slip(
     if len(file_bytes) > 5 * 1024 * 1024:
         raise HTTPException(status_code=422, detail="Payment slip must be 5 MB or smaller")
     content_type = slip.content_type or "image/jpeg"
-    # Upload to Supabase Storage
+    if not content_type.startswith("image/") and content_type != "application/pdf":
+        raise HTTPException(status_code=422, detail="Payment slip must be an image or PDF")
     import uuid
-    import httpx
-    from app.config import settings
-    ext = slip.filename.rsplit(".", 1)[-1] if "." in slip.filename else "jpg"
-    fname = f"slip_{order_id}_{uuid.uuid4().hex[:8]}.{ext}"
-    
-    url = f"{settings.supabase_url}/storage/v1/object/santhai/{fname}"
-    headers = {
-        "Authorization": f"Bearer {settings.supabase_secret_key}",
-        "apikey": settings.supabase_secret_key,
-        "Content-Type": content_type,
-    }
-    async with httpx.AsyncClient() as client:
-        res = await client.post(url, headers=headers, content=file_bytes)
-        if res.status_code == 200:
-            final_url = f"{settings.supabase_url}/storage/v1/object/public/santhai/{fname}"
-        else:
-            raise HTTPException(status_code=500, detail="Failed to upload to Supabase Storage")
+    ext = {"image/png": "png", "image/webp": "webp", "application/pdf": "pdf"}.get(content_type, "jpg")
+    try:
+        final_url = upload_slip(sb, f"order_{order_id}/{uuid.uuid4().hex}.{ext}", file_bytes, content_type)
+    except Exception as e:
+        print(f"slip upload failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to upload payment slip")
 
     # Store the receipt first, then append an auditable status transition.
     res = sb.table("orders").update({
@@ -1060,11 +1059,11 @@ async def upload_payment_slip(
         raise HTTPException(status_code=404, detail="Order not found")
         
     update_order_status(
-        sb, order_id, "processing", "customer",
+        sb, order_id, "payment_pending_review", "customer",
         actor_name=order_res.data.get("buyer_name") or order_res.data.get("buyer_email"),
         reason="ผู้ซื้อแนบหลักฐานการชำระเงิน",
     )
-    return {"status": "success", "slip_url": final_url}
+    return {"status": "success", "slip_url": signed_slip_url(sb, final_url)}
 
 
 class CartItemInput(BaseModel):
@@ -1075,8 +1074,8 @@ class CartItemInput(BaseModel):
 class CheckoutCartInput(BaseModel):
     buyer_name: str
     buyer_email: str
-    buyer_phone: Optional[str] = None
-    buyer_address: str
+    buyer_phone: Optional[str] = Field(default=None, max_length=30)
+    buyer_address: ShippingAddress
     items: List[CartItemInput]
 
 @router.post("/checkout_cart")

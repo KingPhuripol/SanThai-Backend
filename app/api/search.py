@@ -4,7 +4,7 @@ Vector search falls back to text-based filtering when embeddings are not yet gen
 """
 from typing import Optional
 
-from fastapi import APIRouter, File, Query, UploadFile
+from fastapi import APIRouter, Query
 
 from app.supabase_client import get_supabase
 
@@ -124,50 +124,3 @@ async def semantic_search(
         results = [r for r in results if province.lower() in (r.get("province") or "").lower()]
 
     return {"query": q, "total": len(results), "results": results[:limit], "search_type": "keyword"}
-
-
-
-@router.post("/analyze-image")
-async def analyze_fabric_image(
-    image: UploadFile = File(..., description="ภาพผ้าที่ต้องการวิเคราะห์"),
-    limit: int = 3,
-):
-    sb = get_supabase()
-    image_bytes = await image.read()
-    mime_type = image.content_type or "image/jpeg"
-
-    # VLM analysis (OpenAI gpt-4o-mini, falls back to Groq internally)
-    from app.services.fabric_vision_service import identify_fabric_from_image, search_fabrics_by_keywords
-    try:
-        vision_result = await identify_fabric_from_image(image_bytes, mime_type)
-    except Exception as e:
-        vision_result = {"error": str(e), "search_keywords": []}
-
-    # Find visually-similar fabrics via the VLM's descriptive keywords —
-    # replaces the old CLIP embedding search (see fabric_vision_service.py
-    # docstring: CLIP requires a locally-loaded model that hung this dev
-    # environment; keyword search is a plain DB query, never hangs).
-    keywords = list(vision_result.get("search_keywords") or [])
-    for extra in (vision_result.get("fabric_type_th"), vision_result.get("pattern_name_th")):
-        if extra:
-            keywords.append(extra)
-
-    similar_fabrics = []
-    for r in search_fabrics_by_keywords(sb, keywords, limit=limit):
-        products_r = sb.table("products").select("price_thb").eq("fabric_id", r["id"]).limit(1).execute()
-        price = (products_r.data or [{}])[0].get("price_thb")
-        similar_fabrics.append({
-            "fabric_id": r["id"],
-            "name_th": r["name_th"],
-            "name_en": r.get("name_en"),
-            "image_url": r.get("image_url"),
-            "weave_technique": r.get("weave_technique"),
-            "dye_method": r.get("dye_method"),
-            "cultural_meaning_th": r.get("cultural_meaning_th"),
-            "cultural_meaning_en": r.get("cultural_meaning_en"),
-            "artisan_name": (r.get("artisans") or {}).get("name"),
-            "province": (r.get("communities") or {}).get("province"),
-            "price_thb": price,
-        })
-
-    return {"vision_analysis": vision_result, "similar_fabrics": similar_fabrics}

@@ -28,7 +28,7 @@ class Settings(BaseSettings):
 
     # App
     app_url: str = "http://localhost:3000"
-    secret_key: str = "santhai-secret-key-change-in-production"
+    secret_key: str = ""
 
     # Supabase (fallback when direct DB is unavailable)
     supabase_url: str = "https://shqgmstbrwkxycyellgn.supabase.co"

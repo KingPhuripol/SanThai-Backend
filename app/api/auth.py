@@ -51,6 +51,7 @@ class ProfileUpdateInput(BaseModel):
     full_name: Optional[str] = None
     email: Optional[EmailStr] = None
     password: Optional[str] = None
+    current_password: Optional[str] = None
     community_name: Optional[str] = None
     province: Optional[str] = None
     region: Optional[str] = None
@@ -140,16 +141,14 @@ async def register(input_data: RegisterInput):
             }).execute()
             community_id = created_community.data[0]["id"]
 
-        now_iso = datetime.now(timezone.utc).isoformat()
+        # New stores wait for admin verification (PUT /admin/artisans/{id}/verify)
+        # and accept store terms themselves via POST /store-terms-acceptance.
         artisan_res = sb.table("artisans").insert({
             "user_id": user_id,
             "name": input_data.full_name,
             "community_id": community_id,
             "bio_th": input_data.bio_th,
-            "store_status": "approved",
-            "verified_at": now_iso,
-            "store_terms_version": STORE_TERMS_VERSION,
-            "store_terms_accepted_at": now_iso,
+            "store_status": "pending",
         }).execute()
         artisan = artisan_res.data[0]
 
@@ -196,31 +195,16 @@ async def login(input_data: LoginInput):
             artisan_id = art_res.data[0]["id"]
             artisan_name = art_res.data[0]["name"]
         else:
-            by_name = sb.table("artisans").select("id, name").eq("name", user.get("full_name")).execute()
-            now_iso = datetime.now(timezone.utc).isoformat()
-            if by_name.data:
-                artisan_id = by_name.data[0]["id"]
-                artisan_name = by_name.data[0]["name"]
-                sb.table("artisans").update({
-                    "user_id": user["id"],
-                    "store_status": "approved",
-                    "verified_at": now_iso,
-                    "store_terms_version": STORE_TERMS_VERSION,
-                    "store_terms_accepted_at": now_iso
-                }).eq("id", artisan_id).execute()
-            else:
-                new_art = sb.table("artisans").insert({
-                    "user_id": user["id"],
-                    "name": user.get("full_name") or "ร้านค้า SanThai",
-                    "community_id": 54,
-                    "store_status": "approved",
-                    "verified_at": now_iso,
-                    "store_terms_version": STORE_TERMS_VERSION,
-                    "store_terms_accepted_at": now_iso
-                }).execute()
-                if new_art.data:
-                    artisan_id = new_art.data[0]["id"]
-                    artisan_name = new_art.data[0]["name"]
+            # Never claim an existing store by name; create a pending one instead.
+            new_art = sb.table("artisans").insert({
+                "user_id": user["id"],
+                "name": user.get("full_name") or "ร้านค้า SanThai",
+                "community_id": 54,
+                "store_status": "pending",
+            }).execute()
+            if new_art.data:
+                artisan_id = new_art.data[0]["id"]
+                artisan_name = new_art.data[0]["name"]
 
     return _issue(user["id"], user["email"], user.get("full_name") or "",
                   user["role"], artisan_id, artisan_name)
@@ -302,7 +286,16 @@ async def me(user: dict = Depends(get_current_user)):
 async def update_profile(input_data: ProfileUpdateInput, user: dict = Depends(get_current_user)):
     sb = get_supabase()
     user_id = user["sub"]
-    
+
+    changes_login = input_data.password or (input_data.email and input_data.email != user.get("email"))
+    if changes_login:
+        current = sb.table("users_profile").select("password_hash").eq("id", user_id).execute()
+        stored_hash = (current.data or [{}])[0].get("password_hash") or ""
+        if not input_data.current_password or not verify_password(input_data.current_password, stored_hash):
+            raise HTTPException(status_code=403, detail="Current password is required to change email or password")
+    if input_data.password and len(input_data.password) < 6:
+        raise HTTPException(status_code=422, detail="Password must be at least 6 characters")
+
     if input_data.email and input_data.email != user.get("email"):
         existing = sb.table("users_profile").select("id").eq("email", input_data.email).execute()
         if existing.data:
@@ -340,7 +333,19 @@ async def update_profile(input_data: ProfileUpdateInput, user: dict = Depends(ge
             community_updates["region"] = input_data.region
             
         if community_updates and community_id:
-            sb.table("communities").update(community_updates).eq("id", community_id).execute()
+            current_comm = sb.table("communities").select("name, province, region").eq("id", community_id).execute()
+            target = {**((current_comm.data or [{}])[0]), **community_updates}
+            match = (
+                sb.table("communities").select("id")
+                .eq("name", target.get("name")).eq("province", target.get("province"))
+                .eq("region", target.get("region"))
+                .execute()
+            )
+            if match.data:
+                artisan_updates["community_id"] = match.data[0]["id"]
+            else:
+                created = sb.table("communities").insert(target).execute()
+                artisan_updates["community_id"] = created.data[0]["id"]
                     
         if artisan_updates:
             sb.table("artisans").update(artisan_updates).eq("id", user["artisan_id"]).execute()

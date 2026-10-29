@@ -12,6 +12,7 @@ from pydantic import BaseModel
 from app.api.deps import get_current_admin
 from app.services.reservation_service import release_expired_reservations
 from app.services.order_status_service import update_order_status
+from app.services.storage_service import signed_slip_url
 from app.supabase_client import get_supabase
 
 router = APIRouter()
@@ -111,7 +112,7 @@ async def list_all_orders(admin: dict = Depends(get_current_admin)):
             "status": o.get("status", "pending"),
             "courier": o.get("courier"),
             "tracking_number": o.get("tracking_number"),
-            "slip_url": o.get("slip_url"),
+            "slip_url": signed_slip_url(sb, o.get("slip_url")),
             "reserved_until": o.get("reserved_until"),
             "created_at": o.get("created_at"),
         }
@@ -249,7 +250,7 @@ async def traffic_report(days: int = 30, admin: dict = Depends(get_current_admin
 
 
 @router.put("/orders/{order_id}/status")
-async def update_order_status(
+async def update_order_status_route(
     order_id: int,
     input_data: UpdateOrderStatusInput,
     admin: dict = Depends(get_current_admin),

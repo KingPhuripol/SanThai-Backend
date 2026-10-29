@@ -22,19 +22,17 @@ try:
     from fastapi.staticfiles import StaticFiles
 
     from app.database import create_tables
-    from app.api import analytics, fabrics, products, chat, search, artisan, auth, designer, admin, verify
+    from app.api import analytics, fabrics, products, chat, search, artisan, auth, designer, admin
 except Exception as e:
     _import_error = traceback.format_exc()
 
 
 if _import_error:
+    print(_import_error)  # visible in server logs only
+
     @app.get("/{path:path}")
     async def catch_all(path: str):
-        return {
-            "status": "error",
-            "message": "SanThai FastAPI import failed on Vercel",
-            "traceback": _import_error,
-        }
+        return {"status": "error", "message": "SanThai API failed to start"}
 else:
     app.add_middleware(
         CORSMiddleware,
@@ -68,7 +66,6 @@ else:
     app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
     app.include_router(designer.router, prefix="/api/designer", tags=["designer"])
     app.include_router(admin.router, prefix="/api/admin", tags=["admin"])
-    app.include_router(verify.router, prefix="/api/verify/fabric", tags=["verify"])
     app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
     @app.options("/{path:path}")
     async def options_handler(path: str):

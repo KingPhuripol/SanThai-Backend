@@ -12,6 +12,9 @@ from jose import jwt
 
 from app.config import settings
 
+if not settings.secret_key or settings.secret_key == "santhai-secret-key-change-in-production":
+    raise RuntimeError("SECRET_KEY is unset or the public default; set a random SECRET_KEY in the environment")
+
 ALGORITHM = "HS256"
 EXPIRE_MINUTES = 60 * 24 * 7  # 7 days — no refresh tokens for the hackathon demo
 

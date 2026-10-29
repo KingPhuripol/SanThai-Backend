@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from app.api.deps import get_current_artisan_id
 from app.services.order_status_service import update_order_status
+from app.services.storage_service import signed_slip_url
 from app.supabase_client import get_supabase
 
 router = APIRouter()
@@ -226,7 +227,7 @@ async def get_dashboard(artisan_id: int, current_artisan_id: int = Depends(get_c
                 "status": o.get("status", "pending"),
                 "courier": o.get("courier"),
                 "tracking_number": o.get("tracking_number"),
-                "slip_url": o.get("slip_url"),
+                "slip_url": signed_slip_url(sb, o.get("slip_url")),
                 "created_at": o.get("created_at"),
             }
             for o in orders
@@ -240,7 +241,7 @@ class UpdateOrderStatusInput(BaseModel):
     reason: str = None
 
 @router.put("/orders/{order_id}/status")
-async def update_order_status(
+async def update_order_status_route(
     order_id: int,
     input_data: UpdateOrderStatusInput,
     artisan_id: int = Depends(get_current_artisan_id),

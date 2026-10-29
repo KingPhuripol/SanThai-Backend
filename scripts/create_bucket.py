@@ -32,5 +32,9 @@ async def test():
             res = await client.put(f"{url}/santhai", headers=headers, json=body_update)
             print("Make public:", res.status_code, res.text)
 
+        # Payment slips: private bucket, read through signed URLs only
+        res = await client.post(url, headers=headers, json={"id": "santhai-slips", "name": "santhai-slips", "public": False})
+        print("Create private slips bucket:", res.status_code, res.text)
+
 if __name__ == "__main__":
     asyncio.run(test())

@@ -83,22 +83,7 @@ async def identify_fabric_from_image(image_bytes: bytes, mime_type: str = "image
             print(f"Groq vision error: {e}")
             pass
 
-    # Fallback smart analysis when external LLM API is unavailable
-    return {
-        "fabric_type_th": "ผ้ามัดหมี่ / ผ้าไหมไทย",
-        "fabric_type_en": "Mudmee Silk / Thai Handwoven Textile",
-        "pattern_name_th": "ลายดอกพิกุล / ลายนาคดั้งเดิม",
-        "weave_technique": "การทอมือแบบขิดและมัดหมี่",
-        "fiber_type": "ไหมแท้ / ฝ้ายธรรมชาติ",
-        "colors": ["คราม", "ทอง", "แดง"],
-        "region_guess": "อีสาน",
-        "province_guess": "ขอนแก่น",
-        "cultural_meaning_th": "ลวดลายมงคลสืบทอดจากภูมิปัญญาการทอมือโบราณของชาวขอนแก่น สะท้อนความอุดมสมบูรณ์และความประณีตของผ้ามัดหมี่ไทย",
-        "description_th": "วิเคราะห์ภาพถ่ายพบว่าเป็นผ้าทอมือทรงคุณค่า มีเอกลักษณ์ลวดลายและเส้นใยประณีต ตรงตามมาตรฐานผ้าไทยยืนยันแล้ว",
-        "confidence": 0.88,
-        "search_keywords": ["มัดหมี่", "ไหม", "ขิด", "แพรวา", "คราม"],
-    }
-
+    raise RuntimeError("No vision model available")
 
 
 def search_fabrics_by_keywords(sb, keywords: list, limit: int = 5) -> list:
